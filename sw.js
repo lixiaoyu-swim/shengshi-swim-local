@@ -1,4 +1,4 @@
-const CACHE_NAME = "shengshi-swim-local-v1";
+const CACHE_NAME = "shengshi-swim-local-v2";
 const CORE_ASSETS = [
   "./",
   "./index.html",
@@ -6,6 +6,9 @@ const CORE_ASSETS = [
   "./app.js",
   "./manifest.webmanifest",
   "./icon.svg",
+  "./icon-192.png",
+  "./icon-512.png",
+  "./apple-touch-icon.png",
 ];
 
 self.addEventListener("install", (event) => {
