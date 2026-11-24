@@ -1,0 +1,20 @@
+{
+  "name": "省实游泳队 · 单机版",
+  "short_name": "省实游泳",
+  "description": "无需登录的单机版学生档案、游泳成绩、进步曲线与长距离惩罚管理。",
+  "lang": "zh-CN",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f4f7f8",
+  "theme_color": "#0b3b5d",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
