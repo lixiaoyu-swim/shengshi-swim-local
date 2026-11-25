@@ -3,7 +3,7 @@ const DATA_CACHE_PREFIX = "shengshi-team-data-v1:";
 const LOCAL_ONLY_MODE = true;
 const LOCAL_DATA_KEY = "shengshi-swim-local-data-v1";
 const BACKUP_META_KEY = "shengshi-swim-backup-meta-v1";
-const APP_VERSION = "1.2.0";
+const APP_VERSION = "1.2.1";
 const BACKUP_REMINDER_DAYS = 7;
 
 const EVENTS = [
@@ -143,6 +143,7 @@ function seedState() {
       id: "student-lin",
       name: "林小屿",
       gender: "女",
+      grade: "高一",
       birthDate: "2011-03-18",
       group: "竞赛 A 组",
       status: "active",
@@ -156,6 +157,7 @@ function seedState() {
       id: "student-chen",
       name: "陈一川",
       gender: "男",
+      grade: "高二",
       birthDate: "2010-08-06",
       group: "竞赛 A 组",
       status: "active",
@@ -169,6 +171,7 @@ function seedState() {
       id: "student-wang",
       name: "王知夏",
       gender: "女",
+      grade: "初三",
       birthDate: "2012-05-22",
       group: "竞赛 B 组",
       status: "active",
@@ -182,6 +185,7 @@ function seedState() {
       id: "student-zhou",
       name: "周沐阳",
       gender: "男",
+      grade: "初一",
       birthDate: "2013-11-12",
       group: "基础组",
       status: "active",
@@ -195,6 +199,7 @@ function seedState() {
       id: "student-xu",
       name: "许安然",
       gender: "女",
+      grade: "高三",
       birthDate: "2009-01-29",
       group: "竞赛 A 组",
       status: "paused",
@@ -353,7 +358,12 @@ function normaliseState(raw) {
           ? raw.coach.avatar
           : "",
     },
-    students: raw.students.filter((student) => student?.id && student?.name),
+    students: raw.students
+      .filter((student) => student?.id && student?.name)
+      .map((student) => ({
+        ...student,
+        grade: String(student.grade || "").slice(0, 20),
+      })),
     records: raw.records
       .filter(
         (record) =>
@@ -1545,7 +1555,7 @@ function renderStudentsPage() {
     .filter((student) => ui.studentStatus === "all" || student.status === ui.studentStatus)
     .filter((student) => {
       if (!term) return true;
-      return [student.name, student.group, student.guardian, student.notes].some((value) =>
+      return [student.name, student.grade, student.group, student.guardian, student.notes].some((value) =>
         String(value || "").toLowerCase().includes(term),
       );
     })
@@ -1565,7 +1575,7 @@ function renderStudentsPage() {
       <div class="toolbar">
         <label class="search-box">
           ${ICONS.search}
-          <input id="studentSearch" type="search" value="${esc(ui.studentSearch)}" placeholder="搜索姓名、分组或备注" autocomplete="off" />
+          <input id="studentSearch" type="search" value="${esc(ui.studentSearch)}" placeholder="搜索姓名、年级、分组或备注" autocomplete="off" />
         </label>
         <select class="select" id="studentGroup" aria-label="按分组筛选">
           <option value="all">全部分组</option>
@@ -1605,7 +1615,7 @@ function studentCard(student) {
         <div class="avatar" style="--avatar-color:${background};--avatar-ink:${color}">${esc(initials(student.name))}</div>
         <div class="student-name">
           <strong>${esc(student.name)} ${statusBadge(student.status)}</strong>
-          <p>${esc(student.group || "未分组")} · ${esc(student.gender || "未填写")}</p>
+          <p>${esc(student.group || "未分组")} · ${esc(student.grade || "年级未填")} · ${esc(student.gender || "未填写")}</p>
         </div>
         <span class="card-arrow">${ICONS.arrow}</span>
       </div>
@@ -1872,6 +1882,7 @@ function renderStudentPage(studentId) {
           </div>
           <div class="profile-meta">
             <span>${esc(student.group || "未分组")}</span>
+            <span>${esc(student.grade || "年级未填")}</span>
             <span>${esc(student.gender || "性别未填")}${age !== null ? ` · ${age} 岁` : ""}</span>
             <span>加入于 ${esc(formatDate(student.joinedAt, true))}</span>
             ${student.guardian ? `<span>联系人 ${esc(student.guardian)}</span>` : ""}
@@ -3063,6 +3074,18 @@ function openStudentModal(studentId = null) {
           </select>
         </div>
         <div class="field">
+          <label for="studentGrade">年级</label>
+          <input id="studentGrade" name="grade" list="gradeSuggestions" maxlength="20" value="${esc(student?.grade || "")}" placeholder="例如：高一" />
+          <datalist id="gradeSuggestions">
+            <option value="初一"></option>
+            <option value="初二"></option>
+            <option value="初三"></option>
+            <option value="高一"></option>
+            <option value="高二"></option>
+            <option value="高三"></option>
+          </datalist>
+        </div>
+        <div class="field">
           <label for="studentBirthDate">出生日期</label>
           <input id="studentBirthDate" name="birthDate" type="date" value="${esc(student?.birthDate || "")}" />
         </div>
@@ -3115,6 +3138,7 @@ function openStudentModal(studentId = null) {
       const payload = {
         name,
         gender: String(formData.get("gender") || ""),
+        grade: String(formData.get("grade") || "").trim(),
         birthDate: String(formData.get("birthDate") || ""),
         joinedAt: String(formData.get("joinedAt") || todayISO()),
         group: String(formData.get("group") || "").trim(),
@@ -3331,7 +3355,7 @@ function studentOptions(selectedId = "") {
     .sort((a, b) => a.name.localeCompare(b.name, "zh-CN"))
     .map(
       (student) =>
-        `<option value="${esc(student.id)}" ${selectedId === student.id ? "selected" : ""}>${esc(student.name)} · ${esc(student.group || "未分组")}</option>`,
+        `<option value="${esc(student.id)}" ${selectedId === student.id ? "selected" : ""}>${esc(student.name)} · ${esc(student.grade || "年级未填")} · ${esc(student.group || "未分组")}</option>`,
     )
     .join("");
 }

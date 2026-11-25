@@ -1,4 +1,4 @@
-const CACHE_NAME = "shengshi-swim-local-v5";
+const CACHE_NAME = "shengshi-swim-local-v6";
 const CORE_ASSETS = [
   "./",
   "./index.html",
