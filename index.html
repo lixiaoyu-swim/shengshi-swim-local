@@ -11,10 +11,16 @@
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="icon" href="./icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
-    <link rel="stylesheet" href="./styles.css?v=local1" />
+    <link rel="stylesheet" href="./styles.css?v=local3" />
     <title>省实游泳队 · 单机版</title>
   </head>
   <body>
+    <div id="runtimeNotice" class="runtime-notice" role="status" aria-live="polite" hidden>
+      <span class="runtime-notice-dot" aria-hidden="true"></span>
+      <span id="runtimeNoticeText"></span>
+      <button id="runtimeNoticeAction" class="runtime-notice-action" type="button" hidden></button>
+      <button id="runtimeNoticeClose" class="runtime-notice-close" type="button" aria-label="关闭提示">×</button>
+    </div>
     <div class="app-shell">
       <aside class="sidebar" aria-label="主导航">
         <a class="brand" href="#dashboard" aria-label="返回首页">
@@ -94,6 +100,6 @@
       </form>
     </dialog>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="./app.js?v=local1" defer></script>
+    <script src="./app.js?v=local3" defer></script>
   </body>
 </html>

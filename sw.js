@@ -1,4 +1,4 @@
-const CACHE_NAME = "shengshi-swim-local-v2";
+const CACHE_NAME = "shengshi-swim-local-v4";
 const CORE_ASSETS = [
   "./",
   "./index.html",
@@ -25,6 +25,10 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SKIP_WAITING") self.skipWaiting();
+});
+
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   const requestUrl = new URL(event.request.url);
@@ -38,6 +42,12 @@ self.addEventListener("fetch", (event) => {
         }
         return response;
       })
-      .catch(() => caches.match(event.request)),
+      .catch(() =>
+        caches.match(event.request).then((cached) => {
+          if (cached) return cached;
+          if (event.request.mode === "navigate") return caches.match("./index.html");
+          return undefined;
+        }),
+      ),
   );
 });

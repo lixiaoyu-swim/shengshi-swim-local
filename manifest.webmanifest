@@ -3,6 +3,7 @@
   "short_name": "省实游泳",
   "description": "无需登录的单机版学生档案、游泳成绩、进步曲线与长距离惩罚管理。",
   "lang": "zh-CN",
+  "id": "./",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

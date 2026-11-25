@@ -2,6 +2,9 @@ const STORAGE_KEY = "breaking-waves-data-v1";
 const DATA_CACHE_PREFIX = "shengshi-team-data-v1:";
 const LOCAL_ONLY_MODE = true;
 const LOCAL_DATA_KEY = "shengshi-swim-local-data-v1";
+const BACKUP_META_KEY = "shengshi-swim-backup-meta-v1";
+const APP_VERSION = "1.1.0";
+const BACKUP_REMINDER_DAYS = 7;
 
 const EVENTS = [
   { key: "free50", stroke: "自由泳", distance: 50, short: "50 自", label: "自由泳 50 米" },
@@ -103,6 +106,13 @@ let activeDataKey = LOCAL_ONLY_MODE ? LOCAL_DATA_KEY : null;
 let remoteSaveTimer = null;
 let adminUsers = [];
 let authMode = "user";
+let installPromptEvent = null;
+let serviceWorkerRegistration = null;
+let runtimeNoticeAction = null;
+let runtimeNoticeKind = "";
+let reloadingForUpdate = false;
+let waitingForUpdateActivation = false;
+let storageEstimate = null;
 
 function uid(prefix = "id") {
   const random =
@@ -416,8 +426,95 @@ function loadState(storageKey = activeDataKey || STORAGE_KEY) {
 }
 
 function saveState() {
-  if (activeDataKey) localStorage.setItem(activeDataKey, JSON.stringify(state));
+  if (activeDataKey) {
+    try {
+      localStorage.setItem(activeDataKey, JSON.stringify(state));
+      updateBackupMeta({
+        dirtySinceBackup: true,
+        lastChangeAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error("保存本机数据失败。", error);
+      showRuntimeNotice({
+        kind: "warning",
+        message: "本机存储空间不足，刚才的修改可能无法在重新打开后保留。请立即导出备份并移除部分头像。",
+        actionLabel: "导出备份",
+        onAction: exportData,
+        dismissible: false,
+      });
+    }
+  }
   if (!LOCAL_ONLY_MODE && currentSession) scheduleRemoteSave();
+}
+
+function getBackupMeta() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(BACKUP_META_KEY) || "{}");
+    return {
+      lastBackupAt: typeof raw.lastBackupAt === "string" ? raw.lastBackupAt : "",
+      lastBackupMethod: typeof raw.lastBackupMethod === "string" ? raw.lastBackupMethod : "",
+      lastChangeAt: typeof raw.lastChangeAt === "string" ? raw.lastChangeAt : "",
+      dirtySinceBackup: Boolean(raw.dirtySinceBackup),
+      backupSnoozedUntil: typeof raw.backupSnoozedUntil === "string" ? raw.backupSnoozedUntil : "",
+    };
+  } catch {
+    return {
+      lastBackupAt: "",
+      lastBackupMethod: "",
+      lastChangeAt: "",
+      dirtySinceBackup: false,
+      backupSnoozedUntil: "",
+    };
+  }
+}
+
+function updateBackupMeta(patch) {
+  try {
+    const next = { ...getBackupMeta(), ...patch };
+    localStorage.setItem(BACKUP_META_KEY, JSON.stringify(next));
+    return next;
+  } catch (error) {
+    console.warn("无法记录备份状态。", error);
+    return getBackupMeta();
+  }
+}
+
+function markBackupComplete(method) {
+  updateBackupMeta({
+    lastBackupAt: new Date().toISOString(),
+    lastBackupMethod: method,
+    dirtySinceBackup: false,
+    backupSnoozedUntil: "",
+  });
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0) return "未知";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+}
+
+function formatBackupDate(value) {
+  if (!value) return "尚未备份";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "尚未备份";
+  return date.toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function backupNeedsAttention() {
+  const meta = getBackupMeta();
+  if (!state.students.length && !state.records.length && !state.penalties.length) return false;
+  if (!meta.dirtySinceBackup && meta.lastBackupAt) return false;
+  if (meta.backupSnoozedUntil && new Date(meta.backupSnoozedUntil).getTime() > Date.now()) return false;
+  if (!meta.lastBackupAt) return true;
+  return Date.now() - new Date(meta.lastBackupAt).getTime() >= BACKUP_REMINDER_DAYS * 86_400_000;
 }
 
 async function apiRequest(path, options = {}) {
@@ -1141,6 +1238,7 @@ function render(focusId = null) {
       route.name,
     );
   renderAccountChrome();
+  if (route.name === "settings") refreshStorageEstimate();
 
   if (focusId) {
     requestAnimationFrame(() => {
@@ -2410,6 +2508,13 @@ function renderAccountsPage() {
 
 function renderSettingsPage() {
   const storageSize = new Blob([JSON.stringify(state)]).size;
+  const backupMeta = getBackupMeta();
+  const standalone = isStandaloneMode();
+  const backupState = backupNeedsAttention()
+    ? { label: "建议备份", className: "coral" }
+    : backupMeta.lastBackupAt
+      ? { label: "已有备份", className: "green" }
+      : { label: "尚未备份", className: "gray" };
   return `
     <div class="page">
       ${pageHeader(
@@ -2429,11 +2534,35 @@ function renderSettingsPage() {
         <span class="badge green">数据不上传</span>
       </section>
       <div class="settings-grid">
+        <section class="setting-card backup-card">
+          <div class="setting-icon" style="background:var(--sun-soft);color:#9c6b16">${ICONS.shield}</div>
+          <div class="setting-card-heading">
+            <h2>备份状态</h2>
+            <span class="badge ${backupState.className}">${backupState.label}</span>
+          </div>
+          <p>
+            ${
+              backupMeta.lastBackupAt
+                ? `最近一次备份：${esc(formatBackupDate(backupMeta.lastBackupAt))}。`
+                : "当前数据还没有导出过备份。"
+            }
+            ${
+              backupMeta.dirtySinceBackup
+                ? "此后又有数据修改，建议重新备份。"
+                : "备份会生成可重新导入的 JSON 文件。"
+            }
+          </p>
+          <div class="inline-actions">
+            <button class="button button-small button-primary" data-action="export-data">${ICONS.download}导出备份</button>
+            <button class="button button-small button-ghost" data-action="share-data">分享备份</button>
+          </div>
+        </section>
+
         <section class="setting-card">
           <div class="setting-icon">${ICONS.download}</div>
           <h2>导出数据备份</h2>
           <p>将 ${state.students.length} 名学生、${state.records.length} 条成绩和 ${state.penalties.length} 条惩罚记录保存为 JSON 文件。</p>
-          <button class="button button-primary" data-action="export-data">${ICONS.download}导出备份</button>
+          <button class="button button-primary" data-action="export-data">${ICONS.download}下载 JSON 备份</button>
         </section>
 
         <section class="setting-card">
@@ -2447,18 +2576,24 @@ function renderSettingsPage() {
         <section class="setting-card">
           <div class="setting-icon" style="background:var(--navy-soft);color:var(--navy)">${ICONS.settings}</div>
           <h2>本机数据状态</h2>
-          <p>当前设备已使用约 ${(storageSize / 1024).toFixed(1)} KB。清除浏览器网站数据会同时删除这些内容，请定期导出备份。</p>
+          <p id="appDataSize">应用数据约 ${formatBytes(storageSize)}。清除浏览器网站数据会同时删除这些内容，请定期导出备份。</p>
+          <div class="storage-meter" aria-hidden="true"><span id="storageMeterFill"></span></div>
+          <p id="deviceStorageText" class="storage-detail">正在读取浏览器存储额度…</p>
           <div class="inline-actions">
             <span class="badge aqua">${state.students.length} 名队员</span>
             <span class="badge">${state.records.length} 条成绩</span>
+            <span class="badge">v${APP_VERSION}</span>
           </div>
         </section>
 
         <section class="setting-card">
           <div class="setting-icon" style="background:var(--coral-soft);color:var(--coral)">${ICONS.trash}</div>
-          <h2>重置为示例数据</h2>
-          <p>清除当前全部内容，恢复应用首次打开时的演示学生、成绩和惩罚记录。此操作不可撤销。</p>
-          <button class="button button-danger" data-action="reset-demo">恢复示例数据</button>
+          <h2>数据清理</h2>
+          <p>可以清空为空白队伍，也可以重新载入演示数据。两种操作都不可撤销，请先导出当前备份。</p>
+          <div class="inline-actions">
+            <button class="button button-small button-danger" data-action="clear-data">${ICONS.trash}清空全部数据</button>
+            <button class="button button-small button-ghost" data-action="reset-demo">恢复示例数据</button>
+          </div>
         </section>
       </div>
 
@@ -2466,15 +2601,20 @@ function renderSettingsPage() {
         <div class="section-head">
           <div>
             <h2>安装到手机</h2>
-            <p>部署到 HTTPS 地址后，可作为独立应用使用</p>
+            <p>${standalone ? "当前已作为独立应用运行" : "部署到 HTTPS 地址后，可作为独立应用使用"}</p>
           </div>
-          <span class="badge aqua">PWA</span>
+          <span class="badge ${standalone ? "green" : "aqua"}">${standalone ? "已安装" : "PWA"}</span>
         </div>
         <p style="margin:0;color:var(--ink-soft);font-size:11px;line-height:1.8">
           iPhone：在 Safari 中打开应用，点击“分享”，选择“添加到主屏幕”。<br />
           Android：使用 Chrome 打开，选择“安装应用”或“添加到主屏幕”。<br />
           数据不会在手机和电脑之间同步；每台设备拥有独立数据。
         </p>
+        ${
+          standalone
+            ? ""
+            : `<div class="inline-actions" style="margin-top:14px"><button class="button button-primary button-small" data-action="install-app">${ICONS.download}安装到当前设备</button></div>`
+        }
       </section>
     </div>
   `;
@@ -3155,12 +3295,6 @@ function openTechnicalModal(recordId) {
   });
 }
 
-function penaltyDistances(stroke) {
-  if (stroke === "自由泳") return [400, 800, 1500];
-  if (stroke === "混合泳") return [200, 400];
-  return [200, 400, 800];
-}
-
 function openPenaltyModal(penaltyId = null, presetStudentId = null) {
   if (!state.students.length) {
     showToast("请先添加一名学生");
@@ -3187,12 +3321,20 @@ function openPenaltyModal(penaltyId = null, presetStudentId = null) {
           </select>
         </div>
         <div class="field">
-          <label for="penaltyDistance">长距离项目 *</label>
-          <select id="penaltyDistance" name="distance" required>
-            ${penaltyDistances(selectedStroke)
-              .map((distance) => `<option value="${distance}" ${Number(penalty?.distance) === distance ? "selected" : ""}>${distance} 米</option>`)
-              .join("")}
-          </select>
+          <label for="penaltyDistance">单趟距离（米）*</label>
+          <input
+            id="penaltyDistance"
+            name="distance"
+            type="number"
+            inputmode="numeric"
+            required
+            min="1"
+            max="100000"
+            step="1"
+            value="${esc(penalty?.distance || (selectedStroke === "自由泳" ? 800 : 400))}"
+            placeholder="例如：250"
+          />
+          <span class="field-hint">可填写任意正整数距离，不限于常见比赛项目</span>
         </div>
         <div class="field">
           <label for="penaltyCount">惩罚数量 *</label>
@@ -3207,7 +3349,7 @@ function openPenaltyModal(penaltyId = null, presetStudentId = null) {
           <textarea id="penaltyNote" name="note" maxlength="300" placeholder="例如：转身技术练习未达标">${esc(penalty?.note || "")}</textarea>
         </div>
       </div>
-      <div class="modal-summary" id="penaltySummary">${esc(selectedStroke)} · ${esc(penalty?.distance || penaltyDistances(selectedStroke)[0])} 米 × ${esc(penalty?.count || 1)} 趟 = ${Number(penalty?.distance || penaltyDistances(selectedStroke)[0]) * Number(penalty?.count || 1)} 米</div>
+      <div class="modal-summary" id="penaltySummary">${esc(selectedStroke)} · ${esc(penalty?.distance || (selectedStroke === "自由泳" ? 800 : 400))} 米 × ${esc(penalty?.count || 1)} 趟 = ${Number(penalty?.distance || (selectedStroke === "自由泳" ? 800 : 400)) * Number(penalty?.count || 1)} 米</div>
       <p class="field-hint" style="margin-top:7px">完成状态会根据累计记录自动计算，无需手动切换。</p>
       <p class="form-error" id="formError" hidden></p>
     `,
@@ -3219,8 +3361,12 @@ function openPenaltyModal(penaltyId = null, presetStudentId = null) {
       }
       const stroke = String(formData.get("stroke") || "");
       const distance = Number(formData.get("distance"));
-      if (!ALL_STROKES.includes(stroke) || !penaltyDistances(stroke).includes(distance)) {
-        showFormError("请选择有效的泳姿与距离。");
+      if (!ALL_STROKES.includes(stroke)) {
+        showFormError("请选择有效的泳姿。");
+        return false;
+      }
+      if (!Number.isInteger(distance) || distance < 1 || distance > 100000) {
+        showFormError("单趟距离必须是 1–100000 之间的整数米。");
         return false;
       }
       const studentId = String(formData.get("studentId") || "");
@@ -3257,23 +3403,18 @@ function openPenaltyModal(penaltyId = null, presetStudentId = null) {
   });
 
   const strokeSelect = document.getElementById("penaltyStroke");
-  const distanceSelect = document.getElementById("penaltyDistance");
+  const distanceInput = document.getElementById("penaltyDistance");
   const countInput = document.getElementById("penaltyCount");
-  const updateSummary = () => {
-    const distances = penaltyDistances(strokeSelect.value);
-    const previousValue = Number(distanceSelect.value);
-    distanceSelect.innerHTML = distances.map((distance) => `<option value="${distance}">${distance} 米</option>`).join("");
-    if (distances.includes(previousValue)) distanceSelect.value = String(previousValue);
-    updatePenaltySummary();
-  };
   const updatePenaltySummary = () => {
-    const distance = Number(distanceSelect.value || penaltyDistances(strokeSelect.value)[0]);
+    const distance = Number(distanceInput.value);
     const count = Number(countInput.value || 1);
     document.querySelector("#penaltySummary").textContent =
-      `${strokeSelect.value} · ${distance} 米 × ${count} 趟 = ${distance * count} 米`;
+      distance > 0
+        ? `${strokeSelect.value} · ${distance} 米 × ${count} 趟 = ${distance * count} 米`
+        : `${strokeSelect.value} · 请输入单趟距离`;
   };
-  strokeSelect.addEventListener("change", updateSummary);
-  distanceSelect.addEventListener("change", updatePenaltySummary);
+  strokeSelect.addEventListener("change", updatePenaltySummary);
+  distanceInput.addEventListener("input", updatePenaltySummary);
   countInput.addEventListener("input", updatePenaltySummary);
 }
 
@@ -3470,24 +3611,76 @@ function deletePenaltyProgress(penaltyId, progressId) {
   });
 }
 
-function exportData() {
+function createBackupArtifact() {
   const data = {
     app: "省实游泳队 · 队伍管理",
-    version: 3,
+    appVersion: APP_VERSION,
+    version: 4,
     exportedAt: new Date().toISOString(),
     ...state,
   };
+  const filename = `省实游泳队-备份-${todayISO()}.json`;
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  return {
+    blob,
+    file: new File([blob], filename, { type: "application/json" }),
+    filename,
+  };
+}
+
+function exportData() {
+  const { blob, filename } = createBackupArtifact();
   const url = URL.createObjectURL(blob);
-  const date = todayISO();
   const link = document.createElement("a");
   link.href = url;
-  link.download = `省实游泳队-备份-${date}.json`;
+  link.download = filename;
   document.body.appendChild(link);
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+  markBackupComplete("download");
   showToast("备份文件已导出");
+  if (routeInfo().name === "settings") render();
+}
+
+async function shareDataBackup() {
+  const { file } = createBackupArtifact();
+  if (!navigator.share || !navigator.canShare?.({ files: [file] })) {
+    exportData();
+    showToast("当前浏览器不支持分享文件，已改为下载备份");
+    return;
+  }
+  try {
+    await navigator.share({
+      title: "省实游泳队数据备份",
+      text: `备份包含 ${state.students.length} 名学生和 ${state.records.length} 条成绩。`,
+      files: [file],
+    });
+    markBackupComplete("share");
+    showToast("备份已分享");
+    if (routeInfo().name === "settings") render();
+  } catch (error) {
+    if (error.name !== "AbortError") {
+      console.warn("分享备份失败。", error);
+      showToast("分享失败，请改用下载备份");
+    }
+  }
+}
+
+function clearAllData() {
+  openModal({
+    title: "清空全部数据？",
+    submitText: "确认清空",
+    danger: true,
+    body: '<p class="delete-copy">当前设备上的全部学生、成绩、惩罚和教练头像都会被删除，队伍会变成空白状态。此操作无法撤销，建议先导出备份。</p>',
+    onSubmit: () => {
+      state = emptyDataState();
+      saveState();
+      showToast("全部数据已清空");
+      render();
+      return true;
+    },
+  });
 }
 
 async function handleImportFile(file) {
@@ -3511,6 +3704,7 @@ async function handleImportFile(file) {
         state = pendingImport;
         pendingImport = null;
         saveState();
+        markBackupComplete("import");
         showToast("数据导入成功");
         render();
         return true;
@@ -3535,6 +3729,114 @@ function resetDemoData() {
       showToast("已恢复示例数据");
       render();
       return true;
+    },
+  });
+}
+
+function isStandaloneMode() {
+  return (
+    window.matchMedia?.("(display-mode: standalone)").matches ||
+    window.navigator.standalone === true
+  );
+}
+
+function installApp() {
+  if (isStandaloneMode()) {
+    showToast("当前已经作为独立应用运行");
+    return;
+  }
+  if (installPromptEvent) {
+    const prompt = installPromptEvent;
+    installPromptEvent = null;
+    prompt.prompt();
+    prompt.userChoice
+      .then((choice) => {
+        if (choice.outcome === "accepted") {
+          showToast("应用已添加到设备");
+          render();
+        }
+      })
+      .catch(() => {});
+    return;
+  }
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  openModal({
+    title: "安装到手机",
+    hideSubmit: true,
+    body: isIOS
+      ? `<p class="delete-copy">请使用 Safari 打开本页，点击底部的“分享”按钮，然后选择 <strong>“添加到主屏幕”</strong>。<br /><br />从主屏幕启动后，应用会以独立窗口运行。</p>`
+      : `<p class="delete-copy">请使用 Chrome 或 Edge 打开本页，在浏览器菜单中选择 <strong>“安装应用”</strong> 或 <strong>“添加到主屏幕”</strong>。<br /><br />首次打开后，应用文件会被缓存，可离线使用。</p>`,
+  });
+}
+
+async function refreshStorageEstimate() {
+  const text = document.querySelector("#deviceStorageText");
+  const meter = document.querySelector("#storageMeterFill");
+  if (!text || !meter) return;
+  if (!navigator.storage?.estimate) {
+    text.textContent = "当前浏览器不提供设备存储额度信息。";
+    return;
+  }
+  try {
+    const estimate = await navigator.storage.estimate();
+    storageEstimate = estimate;
+    const usage = Number(estimate.usage) || 0;
+    const quota = Number(estimate.quota) || 0;
+    const percentage = quota > 0 ? Math.min(100, (usage / quota) * 100) : 0;
+    text.textContent = `浏览器共使用 ${formatBytes(usage)}，可用额度约 ${formatBytes(quota)}。`;
+    meter.style.width = `${Math.max(percentage, usage > 0 ? 1.5 : 0)}%`;
+    meter.classList.toggle("warning", percentage >= 70);
+    meter.classList.toggle("danger", percentage >= 90);
+  } catch {
+    text.textContent = "无法读取浏览器存储额度。";
+  }
+}
+
+function showRuntimeNotice({
+  kind = "info",
+  message,
+  actionLabel = "",
+  onAction = null,
+  onDismiss = null,
+  dismissible = true,
+}) {
+  const notice = document.querySelector("#runtimeNotice");
+  if (!notice) return;
+  runtimeNoticeKind = kind;
+  runtimeNoticeAction = onAction;
+  notice.dataset.kind = kind;
+  notice.querySelector("#runtimeNoticeText").textContent = message;
+  const action = notice.querySelector("#runtimeNoticeAction");
+  action.hidden = !actionLabel;
+  action.textContent = actionLabel;
+  const close = notice.querySelector("#runtimeNoticeClose");
+  close.hidden = !dismissible;
+  close.dataset.onDismiss = onDismiss ? "true" : "false";
+  notice._onDismiss = onDismiss;
+  notice.hidden = false;
+}
+
+function hideRuntimeNotice() {
+  const notice = document.querySelector("#runtimeNotice");
+  if (!notice) return;
+  notice.hidden = true;
+  notice._onDismiss = null;
+  runtimeNoticeAction = null;
+  runtimeNoticeKind = "";
+}
+
+function maybeShowBackupReminder() {
+  if (!backupNeedsAttention()) return;
+  if (runtimeNoticeKind === "offline" || runtimeNoticeKind === "update") return;
+  showRuntimeNotice({
+    kind: "warning",
+    message: "数据目前只在当前设备上，近期修改还没有生成新的备份。",
+    actionLabel: "立即导出",
+    onAction: exportData,
+    dismissible: true,
+    onDismiss: () => {
+      const remindAt = new Date(Date.now() + 3 * 86_400_000).toISOString();
+      updateBackupMeta({ backupSnoozedUntil: remindAt });
     },
   });
 }
@@ -3608,11 +3910,20 @@ function handleAction(action, element) {
     case "export-data":
       exportData();
       break;
+    case "share-data":
+      shareDataBackup();
+      break;
     case "import-data":
       document.querySelector("#importFile")?.click();
       break;
+    case "clear-data":
+      clearAllData();
+      break;
     case "reset-demo":
       resetDemoData();
+      break;
+    case "install-app":
+      installApp();
       break;
     case "add-account":
       openAccountModal();
@@ -3770,6 +4081,33 @@ document.querySelector("#mobileQuickAdd").addEventListener("click", () => {
   else openRecordModal();
 });
 
+document.querySelector("#runtimeNoticeAction").addEventListener("click", () => {
+  const action = runtimeNoticeAction;
+  hideRuntimeNotice();
+  action?.();
+});
+
+document.querySelector("#runtimeNoticeClose").addEventListener("click", () => {
+  const notice = document.querySelector("#runtimeNotice");
+  const onDismiss = notice?._onDismiss;
+  hideRuntimeNotice();
+  onDismiss?.();
+});
+
+window.addEventListener("beforeinstallprompt", (event) => {
+  event.preventDefault();
+  installPromptEvent = event;
+});
+
+window.addEventListener("appinstalled", () => {
+  installPromptEvent = null;
+  showToast("省实游泳队已安装到设备");
+  if (routeInfo().name === "settings") render();
+});
+
+window.addEventListener("online", updateConnectionNotice);
+window.addEventListener("offline", updateConnectionNotice);
+
 window.addEventListener("hashchange", async () => {
   if (!currentSession) {
     showAuthPage(authMode);
@@ -3787,10 +4125,72 @@ window.addEventListener("hashchange", async () => {
   window.scrollTo({ top: 0, behavior: "smooth" });
 });
 
-if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./sw.js").catch((error) => console.warn("离线缓存注册失败", error));
+function updateConnectionNotice() {
+  if (!navigator.onLine) {
+    showRuntimeNotice({
+      kind: "offline",
+      message: "当前处于离线状态。现有功能仍可使用，数据会继续保存在本机。",
+      dismissible: false,
+    });
+  } else if (runtimeNoticeKind === "offline") {
+    hideRuntimeNotice();
+    window.setTimeout(maybeShowBackupReminder, 600);
+  }
+}
+
+function showUpdateNotice(registration) {
+  showRuntimeNotice({
+    kind: "update",
+    message: "应用有新版本，更新后可继续离线使用。",
+    actionLabel: "立即更新",
+    dismissible: true,
+    onAction: () => {
+      if (registration?.waiting) {
+        waitingForUpdateActivation = true;
+        registration.waiting.postMessage({ type: "SKIP_WAITING" });
+      } else {
+        window.location.reload();
+      }
+    },
   });
+}
+
+async function registerServiceWorker() {
+  if (!("serviceWorker" in navigator) || !location.protocol.startsWith("http")) return;
+  try {
+    const registration = await navigator.serviceWorker.register("./sw.js");
+    serviceWorkerRegistration = registration;
+    if (registration.waiting && navigator.serviceWorker.controller) {
+      showUpdateNotice(registration);
+    }
+    registration.addEventListener("updatefound", () => {
+      const worker = registration.installing;
+      if (!worker) return;
+      worker.addEventListener("statechange", () => {
+        if (worker.state === "installed" && navigator.serviceWorker.controller) {
+          showUpdateNotice(registration);
+        }
+      });
+    });
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (waitingForUpdateActivation && !reloadingForUpdate) {
+        reloadingForUpdate = true;
+        window.location.reload();
+      }
+    });
+  } catch (error) {
+    console.warn("离线缓存注册失败。", error);
+  }
+}
+
+async function requestPersistentStorage() {
+  if (!navigator.storage?.persist) return;
+  try {
+    const alreadyPersisted = await navigator.storage.persisted?.();
+    if (!alreadyPersisted) await navigator.storage.persist();
+  } catch (error) {
+    console.warn("无法申请持久化存储。", error);
+  }
 }
 
 window.addEventListener("beforeunload", () => {
@@ -3819,6 +4219,11 @@ async function bootstrap() {
       history.replaceState(null, "", "#dashboard");
     }
     render();
+    updateConnectionNotice();
+    refreshStorageEstimate();
+    registerServiceWorker();
+    requestPersistentStorage();
+    window.setTimeout(maybeShowBackupReminder, 1200);
     return;
   }
   try {
