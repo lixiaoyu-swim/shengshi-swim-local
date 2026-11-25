@@ -891,6 +891,46 @@ main {
   font-weight: 620;
 }
 
+.stat-card-link {
+  display: block;
+  min-height: 140px;
+  padding-bottom: 38px;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    transform 170ms ease,
+    box-shadow 170ms ease,
+    border-color 170ms ease;
+}
+
+.stat-card-link:hover,
+.stat-card-link:focus-visible {
+  border-color: #bfd6d9;
+  box-shadow: var(--shadow-md);
+  outline: 0;
+  transform: translateY(-3px);
+}
+
+.stat-open {
+  position: absolute;
+  right: 16px;
+  bottom: 13px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--stat-color, var(--navy));
+  font-size: 10px;
+  font-weight: 760;
+}
+
+.stat-open svg {
+  width: 12px;
+  height: 12px;
+  fill: currentColor;
+}
+
 .content-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.55fr) minmax(290px, 0.78fr);
@@ -1235,6 +1275,199 @@ main {
   margin-top: 15px;
 }
 
+.roster-status-stack {
+  display: grid;
+  gap: 22px;
+}
+
+.roster-status-section {
+  padding: 21px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.roster-status-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 17px;
+}
+
+.roster-status-head h2 {
+  margin: 0;
+  font-size: 21px;
+  font-weight: 780;
+}
+
+.roster-status-head p {
+  margin: 5px 0 0;
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+
+.ranking-event-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.ranking-event-card {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+}
+
+.ranking-event-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.ranking-event-head h2 {
+  margin: 8px 0 0;
+  font-size: 17px;
+  font-weight: 770;
+}
+
+.ranking-event-head > span {
+  color: var(--ink-faint);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.ranking-list {
+  display: grid;
+  gap: 5px;
+}
+
+.ranking-row {
+  display: grid;
+  width: 100%;
+  min-height: 48px;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 11px;
+  background: #fafcfc;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    background 150ms ease,
+    transform 150ms ease;
+}
+
+.ranking-row:hover {
+  background: var(--navy-soft);
+  transform: translateX(2px);
+}
+
+.ranking-position {
+  display: grid;
+  width: 27px;
+  height: 27px;
+  place-items: center;
+  border-radius: 9px;
+  background: var(--navy-soft);
+  color: var(--navy);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.ranking-position.rank-1 {
+  background: var(--sun-soft);
+  color: #93620f;
+}
+
+.ranking-position.rank-2 {
+  background: #eef2f4;
+  color: #526773;
+}
+
+.ranking-position.rank-3 {
+  background: #f7ebe3;
+  color: #9c5a32;
+}
+
+.ranking-person {
+  min-width: 0;
+}
+
+.ranking-person strong,
+.ranking-person small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ranking-person strong {
+  font-size: 12px;
+  font-weight: 730;
+}
+
+.ranking-person small {
+  margin-top: 2px;
+  color: var(--ink-faint);
+  font-size: 9px;
+}
+
+.ranking-time {
+  color: var(--navy);
+  font-size: 14px;
+  font-weight: 790;
+  font-variant-numeric: tabular-nums;
+}
+
+.ranking-empty {
+  display: grid;
+  min-height: 90px;
+  place-items: center;
+  border: 1px dashed var(--line-strong);
+  border-radius: 12px;
+  color: var(--ink-faint);
+  font-size: 10px;
+}
+
+.monthly-records-card {
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
+.monthly-record-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.record-inline-rank {
+  display: inline-flex;
+  margin-right: 3px;
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: var(--aqua-soft);
+  color: var(--aqua-dark);
+  font-size: 8px;
+  font-weight: 760;
+  vertical-align: 1px;
+}
+
+.record-inline-rank.muted {
+  background: #eff3f4;
+  color: var(--ink-faint);
+}
+
+.record-rank-badge {
+  margin-top: 8px;
+  text-align: center;
+}
+
 .badge,
 .tag {
   display: inline-flex;
@@ -1421,30 +1654,54 @@ main {
 }
 
 .pb-card {
-  min-height: 73px;
+  min-height: 91px;
   padding: 11px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: #fbfcfc;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease;
+}
+
+.pb-card:hover {
+  border-color: var(--aqua);
+  background: var(--aqua-soft);
 }
 
 .pb-card span {
   display: block;
-  color: var(--ink-faint);
-  font-size: 8px;
+  color: var(--ink-soft);
+  font-size: 10px;
+  font-weight: 650;
 }
 
 .pb-card strong {
   display: block;
-  margin-top: 9px;
+  margin-top: 7px;
   color: var(--navy);
-  font-size: 13px;
-  font-weight: 720;
+  font-size: 14px;
+  font-weight: 760;
   font-variant-numeric: tabular-nums;
+}
+
+.pb-card .pb-rank {
+  display: block;
+  margin-top: 7px;
+  color: var(--aqua-dark);
+  font-size: 9px;
+  font-weight: 760;
 }
 
 .pb-card.empty strong {
   color: #b7c5ca;
+}
+
+.pb-card.empty .pb-rank {
+  color: var(--ink-faint);
 }
 
 .tabs {
@@ -3892,6 +4149,11 @@ main {
     padding: 16px;
   }
 
+  .stat-card-link {
+    min-height: 126px;
+    padding-bottom: 36px;
+  }
+
   .stat-value strong {
     font-size: 30px;
   }
@@ -3923,6 +4185,32 @@ main {
   .student-grid {
     grid-template-columns: 1fr;
     gap: 11px;
+  }
+
+  .roster-status-section {
+    padding: 15px;
+    border-radius: 18px;
+  }
+
+  .roster-status-head {
+    align-items: center;
+  }
+
+  .roster-status-head h2 {
+    font-size: 18px;
+  }
+
+  .ranking-event-grid {
+    grid-template-columns: 1fr;
+    gap: 11px;
+  }
+
+  .ranking-event-card {
+    padding: 15px;
+  }
+
+  .ranking-row {
+    min-height: 50px;
   }
 
   .student-card {
@@ -3991,7 +4279,7 @@ main {
   }
 
   .pb-card {
-    min-height: 69px;
+    min-height: 88px;
   }
 
   .chart-toolbar {

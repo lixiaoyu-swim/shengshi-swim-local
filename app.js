@@ -3,7 +3,7 @@ const DATA_CACHE_PREFIX = "shengshi-team-data-v1:";
 const LOCAL_ONLY_MODE = true;
 const LOCAL_DATA_KEY = "shengshi-swim-local-data-v1";
 const BACKUP_META_KEY = "shengshi-swim-backup-meta-v1";
-const APP_VERSION = "1.1.0";
+const APP_VERSION = "1.2.0";
 const BACKUP_REMINDER_DAYS = 7;
 
 const EVENTS = [
@@ -679,6 +679,48 @@ function getPB(studentId, eventKey) {
   return records.reduce((best, record) => (record.seconds < best.seconds ? record : best), records[0]);
 }
 
+function getEventRanking(eventKey) {
+  const entries = state.students
+    .map((student) => ({ student, record: getPB(student.id, eventKey) }))
+    .filter((entry) => entry.record)
+    .sort(
+      (a, b) =>
+        a.record.seconds - b.record.seconds ||
+        a.student.name.localeCompare(b.student.name, "zh-CN"),
+    );
+  let previousSeconds = null;
+  let previousRank = 0;
+  return entries.map((entry, index) => {
+    const rank =
+      previousSeconds !== null && Math.abs(entry.record.seconds - previousSeconds) < 0.0001
+        ? previousRank
+        : index + 1;
+    previousSeconds = entry.record.seconds;
+    previousRank = rank;
+    return { ...entry, rank };
+  });
+}
+
+function getStudentEventRank(studentId, eventKey) {
+  const ranking = getEventRanking(eventKey);
+  const entry = ranking.find((item) => item.student.id === studentId);
+  return entry ? { rank: entry.rank, total: ranking.length } : null;
+}
+
+function getRecordEventRank(record) {
+  if (!record || !EVENT_MAP[record.eventKey] || !Number.isFinite(Number(record.seconds))) return null;
+  const eventRecords = state.records.filter((item) => item.eventKey === record.eventKey);
+  const betterResults = eventRecords.filter(
+    (item) => Number(item.seconds) < Number(record.seconds) - 0.0001,
+  ).length;
+  return { rank: betterResults + 1, total: eventRecords.length };
+}
+
+function rankBadge(rankInfo, emptyLabel = "暂无排名") {
+  if (!rankInfo) return `<span class="record-inline-rank muted">${esc(emptyLabel)}</span>`;
+  return `<span class="record-inline-rank">项目第 ${rankInfo.rank} 名${rankInfo.total ? ` / ${rankInfo.total}` : ""}</span>`;
+}
+
 function createDemoTechnical(event, seconds, index) {
   if (!event || !seconds) return null;
   const splitCount = Math.ceil(event.distance / 25);
@@ -850,7 +892,7 @@ function avatarFor(student) {
 function statusBadge(status) {
   return status === "active"
     ? '<span class="status-dot">在队</span>'
-    : '<span class="status-dot paused">停训</span>';
+    : '<span class="status-dot paused">离队</span>';
 }
 
 function strokeTag(penalty) {
@@ -1174,9 +1216,9 @@ function routeInfo() {
 
 function setActiveNav(route) {
   const active =
-    route === "student"
+    ["student", "team-status"].includes(route)
       ? "students"
-      : route === "recordDetail"
+      : ["recordDetail", "event-rankings", "month-records"].includes(route)
         ? "records"
         : route === "penaltyDetail"
           ? "penalties"
@@ -1211,8 +1253,14 @@ function render(focusId = null) {
 
   if (route.name === "student") {
     html = renderStudentPage(route.id);
+  } else if (route.name === "team-status") {
+    html = renderTeamStatusPage();
   } else if (route.name === "recordDetail") {
     html = renderRecordDetailPage(route.id);
+  } else if (route.name === "event-rankings") {
+    html = renderEventRankingsPage();
+  } else if (route.name === "month-records") {
+    html = renderMonthRecordsPage();
   } else if (route.name === "penaltyDetail") {
     html = renderPenaltyDetailPage(route.id);
   } else if (route.name === "accounts") {
@@ -1234,9 +1282,15 @@ function render(focusId = null) {
   document.title = pageTitle(route);
   const mobileQuickAdd = document.querySelector("#mobileQuickAdd");
   if (mobileQuickAdd)
-    mobileQuickAdd.hidden = ["settings", "recordDetail", "penaltyDetail", "accounts"].includes(
-      route.name,
-    );
+    mobileQuickAdd.hidden = [
+      "settings",
+      "recordDetail",
+      "penaltyDetail",
+      "accounts",
+      "team-status",
+      "event-rankings",
+      "month-records",
+    ].includes(route.name);
   renderAccountChrome();
   if (route.name === "settings") refreshStorageEstimate();
 
@@ -1273,6 +1327,9 @@ function pageTitle(route) {
       ? `${student?.name || "学生"} · ${penalty.stroke}惩罚 · 省实游泳队`
       : "惩罚详情 · 省实游泳队";
   }
+  if (route.name === "team-status") return "队员状态 · 省实游泳队";
+  if (route.name === "event-rankings") return "项目排名 · 省实游泳队";
+  if (route.name === "month-records") return "本月新成绩 · 省实游泳队";
   if (route.name === "accounts") return "账户管理 · 省实游泳队";
   const titles = {
     dashboard: "总览 · 省实游泳队",
@@ -1281,6 +1338,9 @@ function pageTitle(route) {
     penalties: "长距离惩罚 · 省实游泳队",
     settings: "数据设置 · 省实游泳队",
     accounts: "账户管理 · 省实游泳队",
+    "team-status": "队员状态 · 省实游泳队",
+    "event-rankings": "项目排名 · 省实游泳队",
+    "month-records": "本月新成绩 · 省实游泳队",
   };
   return titles[route.name] || "省实游泳队 · 队伍管理";
 }
@@ -1381,10 +1441,10 @@ function renderDashboardPage() {
       ${renderCoachBanner()}
 
       <section class="stats-grid" aria-label="训练数据概览">
-        ${statCard("在队队员", activeStudents.length, "人", "队员总数", state.students.length, "var(--aqua)", "var(--aqua-soft)")}
-        ${statCard("成绩记录", state.records.length, "条", "覆盖项目", new Set(state.records.map((record) => record.eventKey)).size, "var(--navy)", "var(--navy-soft)")}
-        ${statCard("待完成米数", pendingMeters, "米", "涉及队员", new Set(pendingPenalties.map((penalty) => penalty.studentId)).size, "var(--coral)", "var(--coral-soft)")}
-        ${statCard("本月新成绩", monthRecords.length, "条", "持续追踪", monthRecords.length ? "已更新" : "待录入", "var(--sun)", "var(--sun-soft)")}
+        ${statCard("在队队员", activeStudents.length, "人", "队员总数", state.students.length, "var(--aqua)", "var(--aqua-soft)", "team-status")}
+        ${statCard("成绩记录", state.records.length, "条", "覆盖项目", new Set(state.records.map((record) => record.eventKey)).size, "var(--navy)", "var(--navy-soft)", "event-rankings")}
+        ${statCard("待完成米数", pendingMeters, "米", "涉及队员", new Set(pendingPenalties.map((penalty) => penalty.studentId)).size, "var(--coral)", "var(--coral-soft)", "penalties")}
+        ${statCard("本月新成绩", monthRecords.length, "条", "当前月份", monthRecords.length ? "有新记录" : "暂无记录", "var(--sun)", "var(--sun-soft)", "month-records")}
       </section>
 
       <div class="content-grid">
@@ -1447,12 +1507,23 @@ function renderCoachBanner() {
   `;
 }
 
-function statCard(label, value, unit, footLabel, footValue, color, tint) {
+function statCard(label, value, unit, footLabel, footValue, color, tint, route = "") {
+  const content = `
+    <div class="stat-label"><span></span>${esc(label)}</div>
+    <div class="stat-value"><strong>${esc(value)}</strong><small>${esc(unit)}</small></div>
+    <div class="stat-foot">${esc(footLabel)} · ${esc(footValue)}</div>
+    ${route ? `<span class="stat-open">查看详情 ${ICONS.arrow}</span>` : ""}
+  `;
+  if (route) {
+    return `
+      <a class="stat-card stat-card-link" href="#${esc(route)}" data-route="${esc(route)}" style="--stat-color:${color};--stat-tint:${tint}">
+        ${content}
+      </a>
+    `;
+  }
   return `
     <article class="stat-card" style="--stat-color:${color};--stat-tint:${tint}">
-      <div class="stat-label"><span></span>${esc(label)}</div>
-      <div class="stat-value"><strong>${esc(value)}</strong><small>${esc(unit)}</small></div>
-      <div class="stat-foot">${esc(footLabel)} · ${esc(footValue)}</div>
+      ${content}
     </article>
   `;
 }
@@ -1503,7 +1574,7 @@ function renderStudentsPage() {
         <select class="select" id="studentStatus" aria-label="按状态筛选">
           <option value="all" ${ui.studentStatus === "all" ? "selected" : ""}>全部状态</option>
           <option value="active" ${ui.studentStatus === "active" ? "selected" : ""}>在队</option>
-          <option value="paused" ${ui.studentStatus === "paused" ? "selected" : ""}>停训</option>
+          <option value="paused" ${ui.studentStatus === "paused" ? "selected" : ""}>离队</option>
         </select>
       </div>
 
@@ -1553,6 +1624,206 @@ function studentCard(student) {
   `;
 }
 
+function detailBackLink(route, label) {
+  return `<button class="back-link" data-route="${esc(route)}">${ICONS.back}<span>${esc(label)}</span></button>`;
+}
+
+function renderTeamStatusPage() {
+  const activeStudents = state.students
+    .filter((student) => student.status === "active")
+    .sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+  const departedStudents = state.students
+    .filter((student) => student.status !== "active")
+    .sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+
+  const renderGroup = (title, copy, students, emptyCopy) => `
+    <section class="roster-status-section">
+      <div class="roster-status-head">
+        <div>
+          <span class="eyebrow">${title === "在队队员" ? "ACTIVE ROSTER" : "DEPARTED ROSTER"}</span>
+          <h2>${esc(title)}</h2>
+          <p>${esc(copy)}</p>
+        </div>
+        <span class="badge ${title === "在队队员" ? "green" : "gray"}">${students.length} 人</span>
+      </div>
+      ${
+        students.length
+          ? `<div class="student-grid">${students.map(studentCard).join("")}</div>`
+          : `<div class="chart-empty" style="min-height:150px">${esc(emptyCopy)}</div>`
+      }
+    </section>
+  `;
+
+  return `
+    <div class="page">
+      <div class="detail-breadcrumb">
+        ${detailBackLink("dashboard", "返回总览")}
+        <span>点击学生卡片进入完整档案</span>
+      </div>
+      ${pageHeader(
+        "TEAM STATUS",
+        "队员状态",
+        `共 ${state.students.length} 名队员，可以按在队和离队状态查看，并直接进入每名学生的详细档案。`,
+        addStudentButton(),
+      )}
+      <div class="profile-summary roster-summary">
+        <div class="summary-item"><span>在队队员</span><strong>${activeStudents.length} 人</strong></div>
+        <div class="summary-item"><span>离队队员</span><strong>${departedStudents.length} 人</strong></div>
+        <div class="summary-item"><span>训练分组</span><strong>${new Set(state.students.map((student) => student.group).filter(Boolean)).size} 组</strong></div>
+        <div class="summary-item"><span>队员总数</span><strong>${state.students.length} 人</strong></div>
+      </div>
+      <div class="roster-status-stack">
+        ${renderGroup("在队队员", "当前正常参加训练的学生。", activeStudents, "当前没有在队队员。")}
+        ${renderGroup("离队队员", "已暂停训练或离队的学生，历史档案仍然保留。", departedStudents, "当前没有离队队员。")}
+      </div>
+    </div>
+  `;
+}
+
+function renderEventRankingsPage() {
+  const eventsWithRanking = EVENTS.map((event) => ({
+    event,
+    ranking: getEventRanking(event.key),
+  }));
+  const rankedProjects = eventsWithRanking.filter((item) => item.ranking.length > 0);
+
+  return `
+    <div class="page">
+      <div class="detail-breadcrumb">
+        ${detailBackLink("dashboard", "返回总览")}
+        <button class="back-link" data-route="records">查看全部成绩记录 ${ICONS.arrow}</button>
+      </div>
+      ${pageHeader(
+        "EVENT RANKINGS",
+        "全部项目排名",
+        "每项按各学生当前个人最好成绩从快到慢排名；并列成绩显示相同名次。点击姓名进入学生档案。",
+      )}
+      <div class="profile-summary ranking-summary">
+        <div class="summary-item"><span>全部项目</span><strong>${EVENTS.length} 项</strong></div>
+        <div class="summary-item"><span>已有排名项目</span><strong>${rankedProjects.length} 项</strong></div>
+        <div class="summary-item"><span>成绩记录</span><strong>${state.records.length} 条</strong></div>
+        <div class="summary-item"><span>参与排名队员</span><strong>${new Set(rankedProjects.flatMap((item) => item.ranking.map((entry) => entry.student.id))).size} 人</strong></div>
+      </div>
+      <div class="ranking-event-grid">
+        ${eventsWithRanking
+          .map(
+            ({ event, ranking }) => `
+              <section class="ranking-event-card">
+                <div class="ranking-event-head">
+                  <div>
+                    <span class="badge ${event.stroke === "混合泳" ? "coral" : "aqua"}">${esc(event.stroke)}</span>
+                    <h2>${esc(event.label)}</h2>
+                  </div>
+                  <span>${ranking.length} 人</span>
+                </div>
+                ${
+                  ranking.length
+                    ? `<div class="ranking-list">
+                        ${ranking
+                          .map(
+                            (entry) => `
+                              <button class="ranking-row" data-route="student/${esc(entry.student.id)}" aria-label="查看 ${esc(entry.student.name)} 的档案">
+                                <span class="ranking-position rank-${Math.min(entry.rank, 4)}">${entry.rank}</span>
+                                <span class="ranking-person">
+                                  <strong>${esc(entry.student.name)}</strong>
+                                  <small>${esc(entry.student.group || "未分组")}</small>
+                                </span>
+                                <strong class="ranking-time">${formatTime(entry.record.seconds)}</strong>
+                              </button>
+                            `,
+                          )
+                          .join("")}
+                      </div>`
+                    : '<div class="ranking-empty">暂无该项目成绩</div>'
+                }
+              </section>
+            `,
+          )
+          .join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderMonthRecordsPage() {
+  const currentMonth = todayISO().slice(0, 7);
+  const monthRecords = state.records
+    .filter((record) => monthKey(record.date) === currentMonth)
+    .sort(
+      (a, b) =>
+        String(b.date).localeCompare(String(a.date)) ||
+        String(b.createdAt || "").localeCompare(String(a.createdAt || "")),
+    );
+  const grouped = monthRecords.reduce((groups, record) => {
+    (groups[record.date] ||= []).push(record);
+    return groups;
+  }, {});
+  const studentCount = new Set(monthRecords.map((record) => record.studentId)).size;
+  const eventCount = new Set(monthRecords.map((record) => record.eventKey)).size;
+  const monthLabel = new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "long",
+  }).format(new Date());
+
+  return `
+    <div class="page">
+      <div class="detail-breadcrumb">
+        ${detailBackLink("dashboard", "返回总览")}
+        <span>${esc(monthLabel)}</span>
+      </div>
+      ${pageHeader(
+        "MONTHLY RESULTS",
+        "本月新成绩",
+        `查看 ${monthLabel} 录入的全部比赛与训练成绩，点击记录进入完整分段和技术详情。`,
+        `<button class="button button-primary" data-action="add-record">${ICONS.plus}<span>录入成绩</span></button>`,
+      )}
+      <div class="profile-summary monthly-summary">
+        <div class="summary-item"><span>本月新成绩</span><strong>${monthRecords.length} 条</strong></div>
+        <div class="summary-item"><span>涉及队员</span><strong>${studentCount} 人</strong></div>
+        <div class="summary-item"><span>覆盖项目</span><strong>${eventCount} 项</strong></div>
+        <div class="summary-item"><span>记录日期</span><strong>${Object.keys(grouped).length} 天</strong></div>
+      </div>
+      ${
+        monthRecords.length
+          ? Object.entries(grouped)
+              .map(
+                ([date, records]) => `
+                  <section class="date-group">
+                    <div class="date-label">${esc(formatDate(date, true))} · ${records.length} 条新成绩</div>
+                    <div class="card card-pad monthly-records-card">
+                      <div class="record-list">
+                        ${records
+                          .map((record) => {
+                            const student = getStudent(record.studentId);
+                            const rankInfo = getRecordEventRank(record);
+                            return `
+                              <div class="record-row monthly-record-row clickable" data-record-id="${esc(record.id)}" tabindex="0" role="link" aria-label="查看 ${esc(student?.name || "学生")} ${esc(EVENT_MAP[record.eventKey]?.label || "成绩")} 详情">
+                                <div class="record-name">
+                                  <strong>${esc(student?.name || "已删除学生")} · ${esc(EVENT_MAP[record.eventKey]?.label || "成绩")}</strong>
+                                  <p>${rankBadge(rankInfo)}${record.note ? ` · ${esc(record.note)}` : ""}</p>
+                                </div>
+                                <span class="record-value">${formatTime(record.seconds)}<i class="record-open-arrow">${ICONS.arrow}</i></span>
+                              </div>
+                            `;
+                          })
+                          .join("")}
+                      </div>
+                    </div>
+                  </section>
+                `,
+              )
+              .join("")
+          : emptyState(
+              "chart",
+              "本月还没有新成绩",
+              "录入成绩后，本月新增记录会自动汇总到这里。",
+              `<button class="button button-primary" data-action="add-record">${ICONS.plus}录入第一条成绩</button>`,
+            )
+      }
+    </div>
+  `;
+}
+
 function emptyState(icon, title, copy, action = "") {
   const iconSvg = ICONS[icon] || ICONS.users;
   return `
@@ -1597,7 +1868,7 @@ function renderStudentPage(studentId) {
         <div>
           <div class="profile-title">
             <h1>${esc(student.name)}</h1>
-            <span class="badge ${student.status === "active" ? "green" : "gray"}">${student.status === "active" ? "在队训练" : "暂停训练"}</span>
+            <span class="badge ${student.status === "active" ? "green" : "gray"}">${student.status === "active" ? "在队训练" : "已离队"}</span>
           </div>
           <div class="profile-meta">
             <span>${esc(student.group || "未分组")}</span>
@@ -1653,10 +1924,12 @@ function renderStudentPage(studentId) {
             <div class="pb-grid">
               ${EVENTS.map((event) => {
                 const pb = getPB(student.id, event.key);
+                const rankInfo = getStudentEventRank(student.id, event.key);
                 return `
-                  <button class="pb-card ${pb ? "" : "empty"}" data-action="chart-event" data-student-id="${esc(student.id)}" data-event="${event.key}" aria-label="查看${esc(event.label)}曲线">
+                  <button class="pb-card ${pb ? "has-rank" : "empty"}" data-action="chart-event" data-student-id="${esc(student.id)}" data-event="${event.key}" aria-label="查看${esc(event.label)}曲线">
                     <span>${esc(event.short)}</span>
                     <strong>${pb ? formatTime(pb.seconds) : "—"}</strong>
+                    <small class="pb-rank">${rankInfo ? `第 ${rankInfo.rank} 名 / ${rankInfo.total}` : "暂无排名"}</small>
                   </button>
                 `;
               }).join("")}
@@ -1722,7 +1995,7 @@ function renderStudentPage(studentId) {
                           <div class="record-row clickable" data-record-id="${esc(record.id)}" tabindex="0" role="link" aria-label="查看 ${esc(EVENT_MAP[record.eventKey]?.label || "成绩")} 详情">
                             <div class="record-name">
                               <strong>${esc(EVENT_MAP[record.eventKey]?.label || "成绩")}</strong>
-                              <p>${esc(formatDate(record.date, true))}${record.note ? ` · ${esc(record.note)}` : ""}</p>
+                              <p>${rankBadge(getRecordEventRank(record))} · ${esc(formatDate(record.date, true))}${record.note ? ` · ${esc(record.note)}` : ""}</p>
                             </div>
                             <span class="record-value">${formatTime(record.seconds)}</span>
                             <div class="row-actions">
@@ -1852,6 +2125,7 @@ function renderRecordDetailPage(recordId) {
   const completeness = technicalCompleteness(record);
   const pb = getPB(record.studentId, record.eventKey);
   const isPB = pb?.id === record.id;
+  const recordRank = getRecordEventRank(record);
   const pbDelta = pb ? record.seconds - pb.seconds : null;
   const swolfValues = filledSplits.map((split) => split.swolf).filter((value) => value !== null);
   const averageSWOF = swolfValues.length
@@ -1891,6 +2165,7 @@ function renderRecordDetailPage(recordId) {
           <div class="record-time-badge ${isPB ? "pb" : ""}">
             ${isPB ? "PERSONAL BEST" : pbDelta !== null ? `距 PB ${Math.abs(pbDelta).toFixed(2)} 秒` : "暂无 PB 对比"}
           </div>
+          <div class="record-rank-badge">${rankBadge(recordRank)}</div>
         </div>
       </section>
 
@@ -2113,7 +2388,7 @@ function renderRecordsPage() {
                                   <div class="record-row clickable" data-record-id="${esc(record.id)}" tabindex="0" role="link" aria-label="查看 ${esc(student?.name || "学生")} ${esc(EVENT_MAP[record.eventKey]?.label || "成绩")} 详情">
                                     <div class="record-name">
                                       <strong>${esc(student?.name || "已删除学生")} · ${esc(EVENT_MAP[record.eventKey]?.label || "成绩")}</strong>
-                                      <p>${record.note ? esc(record.note) : "训练成绩"}</p>
+                                      <p>${rankBadge(getRecordEventRank(record))} · ${record.note ? esc(record.note) : "训练成绩"}</p>
                                     </div>
                                     <span class="record-value">${formatTime(record.seconds)}<i class="record-open-arrow">${ICONS.arrow}</i></span>
                                     <div class="row-actions">
@@ -2173,7 +2448,7 @@ function renderRecordsPage() {
                           <div class="record-row clickable" data-record-id="${esc(pb.id)}" tabindex="0" role="link" aria-label="查看 ${esc(pb.studentName)} ${esc(pb.eventLabel)} 详情">
                             <div class="record-name">
                               <strong>${esc(pb.studentName)} · ${esc(pb.eventLabel)}</strong>
-                              <p>${esc(formatDate(pb.date, true))}</p>
+                              <p>${rankBadge(getStudentEventRank(pb.studentId, pb.eventKey))} · ${esc(formatDate(pb.date, true))}</p>
                             </div>
                             <span class="record-value">${formatTime(pb.seconds)}<i class="record-open-arrow">${ICONS.arrow}</i></span>
                           </div>
@@ -2808,7 +3083,7 @@ function openStudentModal(studentId = null) {
           <label for="studentStatus">训练状态</label>
           <select id="studentStatus" name="status">
             <option value="active" ${student?.status !== "paused" ? "selected" : ""}>在队训练</option>
-            <option value="paused" ${student?.status === "paused" ? "selected" : ""}>暂停训练</option>
+            <option value="paused" ${student?.status === "paused" ? "selected" : ""}>离队</option>
           </select>
         </div>
         <div class="field">
